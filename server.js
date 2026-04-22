@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
+app.use(require("express").static(require("path").join(__dirname, "public")));
 const PORT = process.env.PORT || 3000;
 
 // Middleware
