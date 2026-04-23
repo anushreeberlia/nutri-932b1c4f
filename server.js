@@ -31,6 +31,10 @@ const db = new sqlite3.Database(dbPath, (err) => {
   }
 });
 
+// Helper functions for weight conversion
+const kgToLbs = (kg) => kg * 2.20462;
+const lbsToKg = (lbs) => lbs / 2.20462;
+
 function calculateBaseGoals(profile) {
   const { age, weight_kg, height_cm, gender, activity_level, goal, target_weight_kg, target_date, body_concerns } = profile;
 
@@ -239,7 +243,7 @@ function initializeDatabase() {
       if (!row) {
         const defaultProfile = {
           age: 30,
-          weight_kg: 70,
+          weight_kg: lbsToKg(155), // Convert 155 lbs to kg
           height_cm: 170,
           gender: 'male',
           activity_level: 'moderate',
@@ -350,7 +354,7 @@ app.post('/api/weight', (req, res) => {
   }
   
   const weightDate = validateAndGetDate(date);
-  console.log(`Adding/updating weight entry: ${weight_kg}kg for ${weightDate}`);
+  console.log(`Adding/updating weight entry: ${weight_kg}kg (${kgToLbs(weight_kg).toFixed(1)} lbs) for ${weightDate}`);
   
   // Use INSERT OR REPLACE to handle updates for the same date
   db.run(
@@ -370,7 +374,7 @@ app.post('/api/weight', (req, res) => {
             console.error('Error fetching saved weight entry:', err);
             return res.status(500).json({ error: err.message });
           }
-          console.log(`Weight entry saved: ${weight_kg}kg for ${weightDate}`);
+          console.log(`Weight entry saved: ${weight_kg}kg (${kgToLbs(weight_kg).toFixed(1)} lbs) for ${weightDate}`);
           res.status(201).json(row);
         }
       );
