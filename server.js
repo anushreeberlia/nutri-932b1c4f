@@ -34,6 +34,50 @@ const db = new sqlite3.Database(dbPath, (err) => {
 const kgToLbs = (kg) => kg * 2.20462;
 const lbsToKg = (lbs) => lbs / 2.20462;
 
+// MET values for specific activities
+const metValues = {
+  'yoga': {
+    'gentle': 2.5,
+    'hatha': 3,
+    'vinyasa': 4,
+    'ashtanga': 4.5,
+    'hot': 5
+  },
+  'muay_thai': {
+    'technique': 6,
+    'sparring': 8,
+    'conditioning': 9,
+    'competition': 10
+  },
+  'strength_training': {
+    'light': 3,
+    'moderate': 5,
+    'vigorous': 6,
+    'powerlifting': 7
+  },
+  'running': {
+    'jogging': 7,
+    'moderate': 8.5,
+    'fast': 11,
+    'sprints': 12.5
+  },
+  'tennis': {
+    'doubles': 6,
+    'singles': 7.3,
+    'competitive': 8
+  },
+  'soccer': {
+    'recreational': 7,
+    'competitive': 10,
+    'training': 8
+  }
+};
+
+function calculateActivityCalories(activity, intensity, duration, weightKg) {
+  const met = metValues[activity]?.[intensity] || 5;
+  return Math.round(met * weightKg * 0.0175 * duration);
+}
+
 function calculateBaseGoals(profile) {
   const { age, weight_kg, height_cm, gender, activity_level, goal, target_weight_kg, target_date, body_concerns } = profile;
 
@@ -214,17 +258,32 @@ function initializeDatabase() {
       FOREIGN KEY (user_id) REFERENCES users (id)
     )`);
 
-    // Activities table
+    // Activities table with activity type and intensity
     db.run(`CREATE TABLE IF NOT EXISTS activities (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER DEFAULT 1,
       name TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      intensity TEXT,
       duration INTEGER NOT NULL,
       calories_burned REAL NOT NULL,
       date TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users (id)
     )`);
+
+    // Add new columns for activity type and intensity
+    db.run(`ALTER TABLE activities ADD COLUMN activity_type TEXT`, (err) => {
+      if (err && !err.message.includes('duplicate column')) {
+        console.error('Error adding activity_type column:', err.message);
+      }
+    });
+    
+    db.run(`ALTER TABLE activities ADD COLUMN intensity TEXT`, (err) => {
+      if (err && !err.message.includes('duplicate column')) {
+        console.error('Error adding intensity column:', err.message);
+      }
+    });
 
     // Weight entries table
     db.run(`CREATE TABLE IF NOT EXISTS weight_entries (
@@ -327,6 +386,23 @@ app.put('/api/user', (req, res) => {
       res.json({ message: 'User updated successfully', goals });
     }
   );
+});
+
+// Get MET values for activity calculator
+app.get('/api/activities/met-values', (req, res) => {
+  res.json(metValues);
+});
+
+// Calculate calories for activity
+app.post('/api/activities/calculate', (req, res) => {
+  const { activity_type, intensity, duration, weight_kg } = req.body;
+  
+  if (!activity_type || !intensity || !duration || !weight_kg) {
+    return res.status(400).json({ error: 'Activity type, intensity, duration, and weight are required' });
+  }
+  
+  const calories = calculateActivityCalories(activity_type, intensity, duration, weight_kg);
+  res.json({ calories });
 });
 
 // Get weight entries
@@ -492,10 +568,10 @@ app.post('/api/foods', (req, res) => {
 
 // Add activity
 app.post('/api/activities', (req, res) => {
-  const { name, duration, calories_burned, date } = req.body;
+  const { name, activity_type, intensity, duration, calories_burned, date } = req.body;
   
-  if (!name || !duration || !calories_burned || duration <= 0 || calories_burned <= 0) {
-    return res.status(400).json({ error: 'Name, valid duration, and calories burned are required' });
+  if (!name || !activity_type || !duration || !calories_burned || duration <= 0 || calories_burned <= 0) {
+    return res.status(400).json({ error: 'Name, activity type, duration, and calories burned are required' });
   }
   
   // Use client-provided date or server date as fallback
@@ -503,8 +579,8 @@ app.post('/api/activities', (req, res) => {
   console.log(`Adding activity "${name}" for date: ${activityDate}`);
   
   db.run(
-    'INSERT INTO activities (user_id, name, duration, calories_burned, date) VALUES (?, ?, ?, ?, ?)',
-    [1, name, duration, calories_burned, activityDate],
+    'INSERT INTO activities (user_id, name, activity_type, intensity, duration, calories_burned, date) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [1, name, activity_type || 'general', intensity, duration, calories_burned, activityDate],
     function(err) {
       if (err) {
         console.error('Error adding activity:', err);
@@ -571,8 +647,8 @@ app.get('/api/history', (req, res) => {
       }
       
       db.all(
-        `SELECT date, COUNT(*) as activity_count, SUM(calories_burned) as total_burned 
-         FROM activities WHERE user_id = 1 AND date >= ? GROUP BY date ORDER BY date DESC`,
+        `SELECT date, activity_type, intensity, COUNT(*) as activity_count, SUM(calories_burned) as total_burned 
+         FROM activities WHERE user_id = 1 AND date >= ? GROUP BY date, activity_type, intensity ORDER BY date DESC`,
         [startDate],
         (err, activityHistory) => {
           if (err) {
@@ -590,7 +666,7 @@ app.get('/api/history', (req, res) => {
                 return res.status(500).json({ error: err.message });
               }
               
-              console.log(`History: ${(foodHistory || []).length} food days, ${(activityHistory || []).length} activity days, ${(weightHistory || []).length} weight entries`);
+              console.log(`History: ${(foodHistory || []).length} food days, ${(activityHistory || []).length} activity entries, ${(weightHistory || []).length} weight entries`);
               res.json({
                 foods: foodHistory || [],
                 activities: activityHistory || [],
@@ -616,7 +692,8 @@ app.listen(PORT, () => {
 
 // Graceful shutdown
 process.on('SIGINT', () => {
-  console.log('\nShutting down server...');
+  console.log('\
+Shutting down server...');
   db.close((err) => {
     if (err) {
       console.error(err.message);
